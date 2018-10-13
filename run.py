@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 ##############################################################################
 
-
 """Perform inference on a single image or all images with a certain extension
 (e.g., .jpg) in a folder.
 """
@@ -15,15 +14,17 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+
 from collections import defaultdict
 import argparse
 import cv2  # NOQA (Must import before importing caffe2 due to bug in cv2)
 import glob
 import logging
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '6'
 import sys
 import time
+from multiprocessing import Pool
 
 from caffe2.python import workspace
 
@@ -37,8 +38,8 @@ import detectron.core.test_engine as infer_engine
 import detectron.datasets.dummy_datasets as dummy_datasets
 import detectron.utils.c2 as c2_utils
 import detectron.utils.vis as vis_utils
-import pdb
-import numpy as np
+import pickle
+from detectron.utils.vis import kp_connections, keypoint_utils, mask_util
 
 c2_utils.import_detectron_ops()
 
@@ -80,14 +81,38 @@ def parse_args():
     parser.add_argument(
         'im_or_folder', help='image or folder of images', default=None
     )
-    parser.add_argument(
-        'pos_file', help='ground truth bounding box', default=None
-    )
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
     return parser.parse_args()
 
+def run_one_image(params):
+        model = params["model"]
+        im_name = params["im_name"]
+        in_pos = params['in_pos']
+        out_name = params["out_name"]
+        #down = params['down']
+        #if out_name in down:
+        #    return
+        print('Processing {}'.format(im_name))
+        im = cv2.imread(im_name)
+        with c2_utils.NamedCudaScope(0):
+            cls_boxes, cls_segms, cls_keyps, cls_bodys = infer_engine.im_detect_all(
+                model, im, None, boxes_in=in_pos
+            )
+        f = open(out_name, "wb")
+        dataset_keypoints, _ = keypoint_utils.get_keypoints()
+        kp_lines = kp_connections(dataset_keypoints)
+        if cls_boxes is not None:
+            boxes = cls_boxes[1]
+            masks = mask_util.decode(cls_segms[1])
+            keypoints = cls_keyps[1]
+            bodys = cls_bodys[1]
+            pickle.dump({'boxes':boxes, 'masks':masks, 'keyps':keypoints, 'bodys':bodys, 'kp_lines':kp_lines}, f)
+        else:
+            pickle.dump({'boxes':None, 'masks':None, 'keyps':None, 'bodys':None, 'kp_lines':kp_lines}, f)
+        #down[out_name] = 1
+        print('Processed {}'.format(im_name))
 
 def main(args):
     logger = logging.getLogger(__name__)
@@ -97,49 +122,26 @@ def main(args):
     assert_and_infer_cfg(cache_urls=False)
     model = infer_engine.initialize_model_from_cfg(args.weights)
     dummy_coco_dataset = dummy_datasets.get_coco_dataset()
-
-    if os.path.isdir(args.im_or_folder):
-        im_list = glob.iglob(args.im_or_folder + '/*.' + args.image_ext)
-    else:
-        im_list = [args.im_or_folder]
-
-    for i, im_name in enumerate(im_list):
-        out_name = os.path.join(
-            args.output_dir, '{}'.format(os.path.basename(im_name) + '.pdf')
-        )
-        logger.info('Processing {} -> {}'.format(im_name, out_name))
-        im = cv2.imread(im_name)
-        timers = defaultdict(Timer)
-        t = time.time()
-        with c2_utils.NamedCudaScope(0):
-            cls_boxes, cls_segms, cls_keyps, cls_bodys = infer_engine.im_detect_all(
-                model, im, None, timers=timers, boxes_in=args.pos_file
-            )
-        logger.info('Inference time: {:.3f}s'.format(time.time() - t))
-        for k, v in timers.items():
-            logger.info(' | {}: {:.3f}s'.format(k, v.average_time))
-        if i == 0:
-            logger.info(
-                ' \ Note: inference on the first image will be slower than the '
-                'rest (caches and auto-tuning need to warm up)'
-            )
-
-        np.save('bodys.npy', np.array(cls_bodys[1][0]))
-        vis_utils.vis_one_image(
-            im[:, :, ::-1],  # BGR -> RGB for visualization
-            im_name,
-            args.output_dir,
-            cls_boxes,
-            cls_segms,
-            cls_keyps,
-            cls_bodys,
-            dataset=dummy_coco_dataset,
-            box_alpha=0.3,
-            show_class=True,
-            thresh=0.7,
-            kp_thresh=2
-        )
-
+    
+    params_list = []
+    down_ = {}
+    for folder in os.listdir(args.im_or_folder):
+        os.system("mkdir -p "+"/workspace/caozhangjie/DensePose/JAAD_result/"+folder)
+        im_list = glob.iglob(args.im_or_folder + '/'+folder+'/*.' + args.image_ext)
+        for im_name in im_list:
+            out_name = "/workspace/caozhangjie/DensePose/JAAD_result/"+folder+'/'+im_name.split("/")[-1].split(".")[0]+".pkl"
+            img_name = '/data/JAAD_clip_images/'+folder+'.mp4/'+str(int(im_name.split("/")[-1].split(".")[0]))+'.jpg'
+            params_list.append({"im_name":img_name, "model":model, "out_name":out_name, 'in_pos':im_name})
+    #pickle.dump(down_, open('down_file.pkl', 'wb'))
+    #pickle.dump(params_list, open("JAAD_param_list.pkl", "wb"))
+    
+    params_list = pickle.load(open("JAAD_param_list.pkl", "r"))
+    down_ = pickle.load(open('down_file.pkl', 'rb'))
+    #print(params_list[0]
+    for params in params_list[0:20000]:
+        params['down'] = down_
+        run_one_image(params)
+    pickle.dump(down_, open('down_file.pkl', 'wb'))
 
 if __name__ == '__main__':
     workspace.GlobalInit(['caffe2', '--caffe2_log_level=0'])

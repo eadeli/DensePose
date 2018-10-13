@@ -37,35 +37,69 @@ import detectron.utils.blob as blob_utils
 import detectron.utils.boxes as box_utils
 import detectron.utils.image as image_utils
 import detectron.utils.keypoints as keypoint_utils
+import pdb
 
 logger = logging.getLogger(__name__)
 
 
-def im_detect_all(model, im, box_proposals, timers=None):
+def im_detect_all(model, im, box_proposals, timers=None, boxes_in=None):
     if timers is None:
         timers = defaultdict(Timer)
 
+    #all_boxes = np.loadtxt(boxes_in).astype(np.float32)
+    #valid_boxes = []
+    #for i in range(all_boxes.shape[0]):
+    #    if all_boxes[i,0] >= 0:
+    #        all_boxes[i,2] += all_boxes[i,0]
+    #        all_boxes[i,3] += all_boxes[i,1]
+    #        valid_boxes.append(all_boxes[i,:])
+    #box_proposals = np.array(valid_boxes)
+
+    #if boxes_in is None:
+    if True:
     # Handle RetinaNet testing separately for now
-    if cfg.RETINANET.RETINANET_ON:
+      if cfg.RETINANET.RETINANET_ON:
         cls_boxes = test_retinanet.im_detect_bbox(model, im, timers)
         return cls_boxes, None, None
 
-    timers['im_detect_bbox'].tic()
-    if cfg.TEST.BBOX_AUG.ENABLED:
+      timers['im_detect_bbox'].tic()
+      if cfg.TEST.BBOX_AUG.ENABLED:
         scores, boxes, im_scale = im_detect_bbox_aug(model, im, box_proposals)
-    else:
+      else:
         scores, boxes, im_scale = im_detect_bbox(
             model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals
         )
-    timers['im_detect_bbox'].toc()
+      timers['im_detect_bbox'].toc()
 
-    # score and boxes are from the whole image after score thresholding and nms
-    # (they are not separated by class)
-    # cls_boxes boxes and scores are separated by class and in the format used
-    # for evaluating results
-    timers['misc_bbox'].tic()
-    scores, boxes, cls_boxes = box_results_with_nms_and_limit(scores, boxes)
-    timers['misc_bbox'].toc()
+      # score and boxes are from the whole image after score thresholding and nms
+      # (they are not separated by class)
+      # cls_boxes boxes and scores are separated by class and in the format used
+      # for evaluating results
+      timers['misc_bbox'].tic()
+      scores, boxes, cls_boxes = box_results_with_nms_and_limit(scores, boxes)
+      timers['misc_bbox'].toc()
+    if boxes_in is not None:
+      timers['im_detect_bbox'].tic()
+      all_boxes = np.loadtxt(boxes_in).astype(np.float32)
+      timers['im_detect_bbox'].toc()
+      timers['misc_bbox'].tic()
+      valid_boxes = []
+      for i in range(all_boxes.shape[0]):
+        if all_boxes[i,0] >= 0:
+            all_boxes[i,2] += all_boxes[i,0]
+            all_boxes[i,3] += all_boxes[i,1]
+            valid_boxes.append(all_boxes[i,:])
+      boxes = np.array(valid_boxes)
+      if boxes.shape[0] == 0:
+        return None, None, None, None
+      cls_boxes = np.zeros([boxes.shape[0], 5]).astype(boxes.dtype)
+      cls_boxes[:,0:4] = boxes
+      cls_boxes[:,4] = 1.0
+      cls_boxes = [[], cls_boxes]
+      scores = np.ones([boxes.shape[0]]).astype(boxes.dtype)
+      im_scale = min(cfg.TEST.MAX_SIZE / float(max(im.shape[0], im.shape[1])), \
+                     cfg.TEST.SCALE / float(min(im.shape[0], im.shape[1])))
+      timers['misc_bbox'].toc()
 
     if cfg.MODEL.MASK_ON and boxes.shape[0] > 0:
         timers['im_detect_mask'].tic()
@@ -101,7 +135,6 @@ def im_detect_all(model, im, box_proposals, timers=None):
         timers['im_detect_body_uv'].tic()
         cls_bodys = im_detect_body_uv(model, im_scale, boxes)
         timers['im_detect_body_uv'].toc()
-        
     else:
         cls_bodys = None
 
