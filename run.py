@@ -91,6 +91,9 @@ def run_one_image(params):
         im_name = params["im_name"]
         in_pos = params['in_pos']
         out_name = params["out_name"]
+        if os.path.exists(out_name):
+            print('Existed {}'.format(im_name))
+            return
         #down = params['down']
         #if out_name in down:
         #    return

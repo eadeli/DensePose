@@ -84,6 +84,8 @@ def im_detect_all(model, im, box_proposals, timers=None, boxes_in=None):
       timers['im_detect_bbox'].toc()
       timers['misc_bbox'].tic()
       valid_boxes = []
+      if len(all_boxes.shape) == 1:
+        all_boxes = all_boxes.reshape([1, all_boxes.shape[0]])
       for i in range(all_boxes.shape[0]):
         if all_boxes[i,0] >= 0:
             all_boxes[i,2] += all_boxes[i,0]
