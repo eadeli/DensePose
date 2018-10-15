@@ -15,7 +15,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 from collections import defaultdict
 import argparse
@@ -89,14 +89,11 @@ def parse_args():
 def run_one_image(params):
         model = params["model"]
         im_name = params["im_name"]
-        in_pos = params['in_pos']
+        in_pos = params['bbox']
         out_name = params["out_name"]
         if os.path.exists(out_name):
             print('Existed {}'.format(im_name))
             return
-        #down = params['down']
-        #if out_name in down:
-        #    return
         print('Processing {}'.format(im_name))
         im = cv2.imread(im_name)
         with c2_utils.NamedCudaScope(0):
@@ -108,7 +105,8 @@ def run_one_image(params):
         kp_lines = kp_connections(dataset_keypoints)
         if cls_boxes is not None:
             boxes = cls_boxes[1]
-            masks = mask_util.decode(cls_segms[1])
+            #masks = mask_util.decode(cls_segms[1])
+            masks = cls_segms[1]
             keypoints = cls_keyps[1]
             bodys = cls_bodys[1]
             pickle.dump({'boxes':boxes, 'masks':masks, 'keyps':keypoints, 'bodys':bodys, 'kp_lines':kp_lines}, f)
@@ -124,27 +122,24 @@ def main(args):
     args.weights = cache_url(args.weights, cfg.DOWNLOAD_CACHE)
     assert_and_infer_cfg(cache_urls=False)
     model = infer_engine.initialize_model_from_cfg(args.weights)
-    dummy_coco_dataset = dummy_datasets.get_coco_dataset()
-    
+
+    ## setting params for each pedestrian
+    ## params = {"im_name":input image path, "model":the model above, "out_name":output path, 
+    ##            'bbox':input bbox path (npy)} bbox need to have n * 4 shape with n is the number of bboxes
+    ##            the four dimensions are (axis of left top point, h, w)
     params_list = []
-    down_ = {}
     for folder in os.listdir(args.im_or_folder):
         os.system("mkdir -p "+"/workspace/caozhangjie/DensePose/JAAD_result/"+folder)
         im_list = glob.iglob(args.im_or_folder + '/'+folder+'/*.' + args.image_ext)
         for im_name in im_list:
             out_name = "/workspace/caozhangjie/DensePose/JAAD_result/"+folder+'/'+im_name.split("/")[-1].split(".")[0]+".pkl"
             img_name = '/data/JAAD_clip_images/'+folder+'.mp4/'+str(int(im_name.split("/")[-1].split(".")[0]))+'.jpg'
-            params_list.append({"im_name":img_name, "model":model, "out_name":out_name, 'in_pos':im_name})
-    #pickle.dump(down_, open('down_file.pkl', 'wb'))
+            params_list.append({"im_name":img_name, "model":model, "out_name":out_name, 'bbox':im_name})
     #pickle.dump(params_list, open("JAAD_param_list.pkl", "wb"))
     
-    params_list = pickle.load(open("JAAD_param_list.pkl", "r"))
-    down_ = pickle.load(open('down_file.pkl', 'rb'))
-    #print(params_list[0]
-    for params in params_list[0:20000]:
-        params['down'] = down_
+    #params_list = pickle.load(open("JAAD_param_list.pkl", "r"))
+    for params in params_list:
         run_one_image(params)
-    pickle.dump(down_, open('down_file.pkl', 'wb'))
 
 if __name__ == '__main__':
     workspace.GlobalInit(['caffe2', '--caffe2_log_level=0'])
